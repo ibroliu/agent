@@ -823,12 +823,32 @@ fn arm_cpu_name(text: &str) -> Option<String> {
             0xd82 => "Cortex-X4",
             _ => "ARM",
         },
-        "0x51" => "Qualcomm Snapdragon",
-        "0x61" => "Apple Silicon",
-        "0x48" => "HiSilicon",
+        "0x42" => match part_num {
+            0x0f => "Vulcan",
+            _ => "Broadcom",
+        },
         "0x43" => "Cavium ThunderX",
         "0x46" => "Fujitsu A64FX",
+        "0x48" => match part_num {
+            0xd01 => "Kunpeng-920",
+            _ => "HiSilicon",
+        },
+        "0x4e" => match part_num {
+            0x000 => "Denver",
+            0x003 => "Carmel",
+            _ => "NVIDIA",
+        },
         "0x50" => "AppliedMicro X-Gene",
+        "0x51" => "Qualcomm Snapdragon",
+        "0x53" => match part_num {
+            0x001 => "Exynos-M1",
+            0x002 => "Exynos-M2",
+            0x003 => "Exynos-M3",
+            0x004 => "Exynos-M4",
+            0x005 => "Exynos-M5",
+            _ => "Samsung",
+        },
+        "0x61" => "Apple Silicon",
         _ => return None,
     };
     Some(name.to_owned())
