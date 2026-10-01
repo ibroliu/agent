@@ -765,9 +765,73 @@ fn cpuinfo() -> (String, u32) {
             let (k, v) = l.split_once(':')?;
             matches!(k.trim(), "model name" | "Model" | "cpu model").then(|| v.trim().to_owned())
         })
+        .or_else(|| arm_cpu_name(&text))
         .unwrap_or_else(|| "unknown".into());
     let cores = text.lines().filter(|l| l.starts_with("processor")).count().max(1) as u32;
     (name, cores)
+}
+
+/// ARM 的 /proc/cpuinfo 没有 "model name"，只有 CPU implementer / CPU part 编码，
+/// 按 ARM 官方 ID 表解码（与 lscpu 逻辑一致），解不出来返回 None。
+fn arm_cpu_name(text: &str) -> Option<String> {
+    let mut implementer = "";
+    let mut part = "";
+    for l in text.lines() {
+        let Some((k, v)) = l.split_once(':') else { continue };
+        match k.trim() {
+            "CPU implementer" => implementer = v.trim(),
+            "CPU part" => part = v.trim(),
+            _ => {}
+        }
+        if !implementer.is_empty() && !part.is_empty() {
+            break;
+        }
+    }
+    if implementer.is_empty() || part.is_empty() {
+        return None;
+    }
+    let part_num = u32::from_str_radix(part.trim_start_matches("0x"), 16).ok()?;
+    let name = match implementer {
+        "0x41" => match part_num {
+            0xd02 => "Cortex-A34",
+            0xd03 => "Cortex-A53",
+            0xd04 => "Cortex-A35",
+            0xd05 => "Cortex-A55",
+            0xd06 => "Cortex-A65",
+            0xd07 => "Cortex-A57",
+            0xd08 => "Cortex-A72",
+            0xd09 => "Cortex-A73",
+            0xd0a => "Cortex-A75",
+            0xd0b => "Cortex-A76",
+            0xd0c => "Neoverse-N1",
+            0xd0d => "Cortex-A77",
+            0xd0e => "Cortex-A76AE",
+            0xd40 => "Neoverse-V1",
+            0xd41 => "Cortex-A78",
+            0xd42 => "Cortex-A78AE",
+            0xd44 => "Cortex-X1",
+            0xd46 => "Cortex-A510",
+            0xd47 => "Cortex-A710",
+            0xd48 => "Cortex-X2",
+            0xd49 => "Neoverse-N2",
+            0xd4a => "Neoverse-E1",
+            0xd4b => "Cortex-A78C",
+            0xd4d => "Cortex-A715",
+            0xd4e => "Cortex-X3",
+            0xd80 => "Cortex-A520",
+            0xd81 => "Cortex-A720",
+            0xd82 => "Cortex-X4",
+            _ => "ARM",
+        },
+        "0x51" => "Qualcomm Snapdragon",
+        "0x61" => "Apple Silicon",
+        "0x48" => "HiSilicon",
+        "0x43" => "Cavium ThunderX",
+        "0x46" => "Fujitsu A64FX",
+        "0x50" => "AppliedMicro X-Gene",
+        _ => return None,
+    };
+    Some(name.to_owned())
 }
 
 fn os_pretty_name() -> String {
@@ -811,6 +875,25 @@ fn virtualization() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn arm_cpu_decodes_implementer_part() {
+        // Oracle Ampere Altra 实机 /proc/cpuinfo 片段。
+        let ampere = "processor\t: 0\nBogoMIPS\t: 200.00\nFeatures\t: fp asimd evtstrm aes pmull sha1 sha2 crc32\nCPU implementer\t: 0x41\nCPU architecture: 8\nCPU variant\t: 0x1\nCPU part\t: 0xd0c\nCPU revision\t: 1\n";
+        assert_eq!(arm_cpu_name(ampere).as_deref(), Some("Neoverse-N1"));
+        // x86 的 model name 不受影响（arm_cpu_name 只在主逻辑找不到时才跑，
+        // 这里直接验证它在 x86 文本上返回 None）。
+        let x86 = "processor\t: 0\nmodel name\t: Intel(R) Xeon(R) Platinum 8375C CPU @ 2.90GHz\n";
+        assert_eq!(arm_cpu_name(x86), None);
+        // 树莓派的 Model 字段同样不受影响。
+        let rpi = "processor\t: 0\nModel\t\t: Raspberry Pi 4 Model B Rev 1.4\n";
+        assert_eq!(arm_cpu_name(rpi), None);
+        // 未知 ARM part 退化为通用名，未知 implementer 返回 None。
+        let unknown_part = "CPU implementer\t: 0x41\nCPU part\t: 0xfff\n";
+        assert_eq!(arm_cpu_name(unknown_part).as_deref(), Some("ARM"));
+        let unknown_imp = "CPU implementer\t: 0x99\nCPU part\t: 0xd0c\n";
+        assert_eq!(arm_cpu_name(unknown_imp), None);
+    }
 
     #[test]
     fn memory_matches_free_not_sysinfo() {
