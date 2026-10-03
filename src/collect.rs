@@ -771,87 +771,182 @@ fn cpuinfo() -> (String, u32) {
     (name, cores)
 }
 
-/// ARM 的 /proc/cpuinfo 没有 "model name"，只有 CPU implementer / CPU part 编码，
-/// 按 ARM 官方 ID 表解码（与 lscpu 逻辑一致），解不出来返回 None。
+/// AArch64 cores by MIDR implementer and part, under the names util-linux's
+/// `lscpu-arm.c` gives them. Cores that cannot run an aarch64 kernel -- 32-bit
+/// Arm, Cortex-M and Cortex-R -- are left out, as this binary never sees them.
+const ARM_CPUS: &[(u32, &str, Parts)] = &[
+    (
+        0x41,
+        "ARM",
+        &[
+            (0xd02, "Cortex-A34"),
+            (0xd03, "Cortex-A53"),
+            (0xd04, "Cortex-A35"),
+            (0xd05, "Cortex-A55"),
+            (0xd06, "Cortex-A65"),
+            (0xd07, "Cortex-A57"),
+            (0xd08, "Cortex-A72"),
+            (0xd09, "Cortex-A73"),
+            (0xd0a, "Cortex-A75"),
+            (0xd0b, "Cortex-A76"),
+            (0xd0c, "Neoverse-N1"),
+            (0xd0d, "Cortex-A77"),
+            (0xd0e, "Cortex-A76AE"),
+            (0xd40, "Neoverse-V1"),
+            (0xd41, "Cortex-A78"),
+            (0xd42, "Cortex-A78AE"),
+            (0xd43, "Cortex-A65AE"),
+            (0xd44, "Cortex-X1"),
+            (0xd46, "Cortex-A510"),
+            (0xd47, "Cortex-A710"),
+            (0xd48, "Cortex-X2"),
+            (0xd49, "Neoverse-N2"),
+            (0xd4a, "Neoverse-E1"),
+            (0xd4b, "Cortex-A78C"),
+            (0xd4c, "Cortex-X1C"),
+            (0xd4d, "Cortex-A715"),
+            (0xd4e, "Cortex-X3"),
+            (0xd4f, "Neoverse-V2"),
+            (0xd80, "Cortex-A520"),
+            (0xd81, "Cortex-A720"),
+            (0xd82, "Cortex-X4"),
+            (0xd83, "Neoverse-V3AE"),
+            (0xd84, "Neoverse-V3"),
+            (0xd85, "Cortex-X925"),
+            (0xd87, "Cortex-A725"),
+            (0xd88, "Cortex-A520AE"),
+            (0xd89, "Cortex-A720AE"),
+            (0xd8a, "C1-Nano"),
+            (0xd8b, "C1-Pro"),
+            (0xd8c, "C1-Ultra"),
+            (0xd8e, "Neoverse-N3"),
+            (0xd8f, "Cortex-A320"),
+            (0xd90, "C1-Premium"),
+        ],
+    ),
+    (0x42, "Broadcom", &[(0x100, "Brahma-B53"), (0x516, "ThunderX2")]),
+    (
+        0x43,
+        "Cavium",
+        &[
+            (0x0a0, "ThunderX"),
+            (0x0a1, "ThunderX-88XX"),
+            (0x0a2, "ThunderX-81XX"),
+            (0x0a3, "ThunderX-83XX"),
+            (0x0af, "ThunderX2-99xx"),
+            (0x0b0, "OcteonTX2"),
+            (0x0b1, "OcteonTX2-98XX"),
+            (0x0b2, "OcteonTX2-96XX"),
+            (0x0b3, "OcteonTX2-95XX"),
+            (0x0b4, "OcteonTX2-95XXN"),
+            (0x0b5, "OcteonTX2-95XXMM"),
+            (0x0b6, "OcteonTX2-95XXO"),
+            (0x0b8, "ThunderX3-T110"),
+        ],
+    ),
+    (0x46, "FUJITSU", &[(0x001, "A64FX"), (0x003, "MONAKA")]),
+    (
+        0x48,
+        "HiSilicon",
+        &[
+            (0xd01, "Kunpeng-920"),
+            (0xd02, "Kunpeng-920"),
+            (0xd03, "Kunpeng-920"),
+            (0xd06, "Kunpeng-950"),
+            (0xd22, "Kunpeng-920"),
+            (0xd40, "Cortex-A76"),
+            (0xd41, "Cortex-A77"),
+        ],
+    ),
+    (0x4e, "NVIDIA", &[(0x000, "Denver"), (0x003, "Denver-2"), (0x004, "Carmel"), (0x010, "Olympus")]),
+    (0x50, "APM", &[(0x000, "X-Gene")]),
+    (
+        0x51,
+        "Qualcomm",
+        &[
+            (0x001, "Oryon"),
+            (0x002, "Oryon-2"),
+            (0x201, "Kryo"),
+            (0x205, "Kryo"),
+            (0x211, "Kryo"),
+            (0x800, "Falkor-V1/Kryo"),
+            (0x801, "Kryo-V2"),
+            (0x802, "Kryo-3XX-Gold"),
+            (0x803, "Kryo-3XX-Silver"),
+            (0x804, "Kryo-4XX-Gold"),
+            (0x805, "Kryo-4XX-Silver"),
+            (0xc00, "Falkor"),
+            (0xc01, "Saphira"),
+        ],
+    ),
+    (
+        0x53,
+        "Samsung",
+        &[(0x001, "exynos-m1"), (0x002, "exynos-m3"), (0x003, "exynos-m4"), (0x004, "exynos-m5")],
+    ),
+    (
+        0x61,
+        "Apple",
+        &[
+            (0x022, "Icestorm-M1"),
+            (0x023, "Firestorm-M1"),
+            (0x024, "Icestorm-M1-Pro"),
+            (0x025, "Firestorm-M1-Pro"),
+            (0x028, "Icestorm-M1-Max"),
+            (0x029, "Firestorm-M1-Max"),
+            (0x032, "Blizzard-M2"),
+            (0x033, "Avalanche-M2"),
+            (0x034, "Blizzard-M2-Pro"),
+            (0x035, "Avalanche-M2-Pro"),
+            (0x038, "Blizzard-M2-Max"),
+            (0x039, "Avalanche-M2-Max"),
+        ],
+    ),
+    (0x6d, "Microsoft", &[(0xd49, "Azure-Cobalt-100")]),
+    (
+        0x70,
+        "Phytium",
+        &[
+            (0x303, "FTC310"),
+            (0x660, "FTC660"),
+            (0x661, "FTC661"),
+            (0x662, "FTC662"),
+            (0x663, "FTC663"),
+            (0x664, "FTC664"),
+            (0x862, "FTC862"),
+        ],
+    ),
+    (0xc0, "Ampere", &[(0xac3, "Ampere-1"), (0xac4, "Ampere-1a")]),
+];
+
+/// One implementer's parts, by MIDR part number.
+type Parts = &'static [(u32, &'static str)];
+
+/// What lscpu prints as the model name of an AArch64 CPU, whose /proc/cpuinfo
+/// carries no name, only each core's `CPU implementer` and `CPU part`. Every
+/// distinct core type is named once, in order, so a big.LITTLE chip reads as
+/// `Cortex-A55 + Cortex-A76` rather than as its first cluster. A part missing
+/// from [`ARM_CPUS`] takes its implementer's name; an unlisted implementer
+/// yields `None`.
 fn arm_cpu_name(text: &str) -> Option<String> {
-    let mut implementer = "";
-    let mut part = "";
-    for l in text.lines() {
-        let Some((k, v)) = l.split_once(':') else { continue };
-        match k.trim() {
-            "CPU implementer" => implementer = v.trim(),
-            "CPU part" => part = v.trim(),
+    let hex = |v: &str| u32::from_str_radix(v.trim().trim_start_matches("0x"), 16).ok();
+    let mut vendor = None;
+    let mut names: Vec<&str> = Vec::new();
+    for (key, value) in text.lines().filter_map(|l| l.split_once(':')) {
+        match key.trim() {
+            "CPU implementer" => vendor = hex(value).and_then(|id| ARM_CPUS.iter().find(|(v, ..)| *v == id)),
+            "CPU part" => {
+                let Some((_, vendor, parts)) = vendor else { continue };
+                let part = hex(value);
+                let name = parts.iter().find(|(p, _)| Some(*p) == part).map_or(*vendor, |(_, n)| *n);
+                if !names.contains(&name) {
+                    names.push(name);
+                }
+            }
             _ => {}
         }
-        if !implementer.is_empty() && !part.is_empty() {
-            break;
-        }
     }
-    if implementer.is_empty() || part.is_empty() {
-        return None;
-    }
-    let part_num = u32::from_str_radix(part.trim_start_matches("0x"), 16).ok()?;
-    let name = match implementer {
-        "0x41" => match part_num {
-            0xd02 => "Cortex-A34",
-            0xd03 => "Cortex-A53",
-            0xd04 => "Cortex-A35",
-            0xd05 => "Cortex-A55",
-            0xd06 => "Cortex-A65",
-            0xd07 => "Cortex-A57",
-            0xd08 => "Cortex-A72",
-            0xd09 => "Cortex-A73",
-            0xd0a => "Cortex-A75",
-            0xd0b => "Cortex-A76",
-            0xd0c => "Neoverse-N1",
-            0xd0d => "Cortex-A77",
-            0xd0e => "Cortex-A76AE",
-            0xd40 => "Neoverse-V1",
-            0xd41 => "Cortex-A78",
-            0xd42 => "Cortex-A78AE",
-            0xd44 => "Cortex-X1",
-            0xd46 => "Cortex-A510",
-            0xd47 => "Cortex-A710",
-            0xd48 => "Cortex-X2",
-            0xd49 => "Neoverse-N2",
-            0xd4a => "Neoverse-E1",
-            0xd4b => "Cortex-A78C",
-            0xd4d => "Cortex-A715",
-            0xd4e => "Cortex-X3",
-            0xd80 => "Cortex-A520",
-            0xd81 => "Cortex-A720",
-            0xd82 => "Cortex-X4",
-            _ => "ARM",
-        },
-        "0x42" => match part_num {
-            0x0f => "Vulcan",
-            _ => "Broadcom",
-        },
-        "0x43" => "Cavium ThunderX",
-        "0x46" => "Fujitsu A64FX",
-        "0x48" => match part_num {
-            0xd01 => "Kunpeng-920",
-            _ => "HiSilicon",
-        },
-        "0x4e" => match part_num {
-            0x000 => "Denver",
-            0x003 => "Carmel",
-            _ => "NVIDIA",
-        },
-        "0x50" => "AppliedMicro X-Gene",
-        "0x51" => "Qualcomm Snapdragon",
-        "0x53" => match part_num {
-            0x001 => "Exynos-M1",
-            0x002 => "Exynos-M2",
-            0x003 => "Exynos-M3",
-            0x004 => "Exynos-M4",
-            0x005 => "Exynos-M5",
-            _ => "Samsung",
-        },
-        "0x61" => "Apple Silicon",
-        _ => return None,
-    };
-    Some(name.to_owned())
+    (!names.is_empty()).then(|| names.join(" + "))
 }
 
 fn os_pretty_name() -> String {
@@ -895,25 +990,6 @@ fn virtualization() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn arm_cpu_decodes_implementer_part() {
-        // Oracle Ampere Altra 实机 /proc/cpuinfo 片段。
-        let ampere = "processor\t: 0\nBogoMIPS\t: 200.00\nFeatures\t: fp asimd evtstrm aes pmull sha1 sha2 crc32\nCPU implementer\t: 0x41\nCPU architecture: 8\nCPU variant\t: 0x1\nCPU part\t: 0xd0c\nCPU revision\t: 1\n";
-        assert_eq!(arm_cpu_name(ampere).as_deref(), Some("Neoverse-N1"));
-        // x86 的 model name 不受影响（arm_cpu_name 只在主逻辑找不到时才跑，
-        // 这里直接验证它在 x86 文本上返回 None）。
-        let x86 = "processor\t: 0\nmodel name\t: Intel(R) Xeon(R) Platinum 8375C CPU @ 2.90GHz\n";
-        assert_eq!(arm_cpu_name(x86), None);
-        // 树莓派的 Model 字段同样不受影响。
-        let rpi = "processor\t: 0\nModel\t\t: Raspberry Pi 4 Model B Rev 1.4\n";
-        assert_eq!(arm_cpu_name(rpi), None);
-        // 未知 ARM part 退化为通用名，未知 implementer 返回 None。
-        let unknown_part = "CPU implementer\t: 0x41\nCPU part\t: 0xfff\n";
-        assert_eq!(arm_cpu_name(unknown_part).as_deref(), Some("ARM"));
-        let unknown_imp = "CPU implementer\t: 0x99\nCPU part\t: 0xd0c\n";
-        assert_eq!(arm_cpu_name(unknown_imp), None);
-    }
 
     #[test]
     fn memory_matches_free_not_sysinfo() {
@@ -975,6 +1051,29 @@ mod tests {
         // held in the v4 `tw` field for both families.
         assert_eq!(parse_sockstat(v4, v6), (86, 6));
         assert_eq!(parse_sockstat("", ""), (0, 0));
+    }
+
+    /// An aarch64 /proc/cpuinfo names no model, so the name is looked up the way
+    /// lscpu does it. The part number is scoped by its implementer: HiSilicon
+    /// reuses ARM's 0xd40, which ARM assigns to Neoverse-V1.
+    #[test]
+    fn an_arm_cpu_is_named_from_its_implementer_and_part() {
+        let core = |implementer: u32, part: u32| {
+            format!("processor\t: 0\nCPU implementer\t: {implementer:#x}\nCPU part\t: {part:#x}\n")
+        };
+        // Oracle Cloud's Ampere Altra, as its guests see it.
+        let altra = "processor\t: 0\nBogoMIPS\t: 50.00\nFeatures\t: fp asimd evtstrm aes pmull sha1 sha2 crc32\n\
+                     CPU implementer\t: 0x41\nCPU architecture: 8\nCPU variant\t: 0x3\nCPU part\t: 0xd0c\nCPU revision\t: 1\n";
+        assert_eq!(arm_cpu_name(altra).as_deref(), Some("Neoverse-N1"));
+        assert_eq!(arm_cpu_name(&core(0x41, 0xd40)).as_deref(), Some("Neoverse-V1"));
+        assert_eq!(arm_cpu_name(&core(0x48, 0xd40)).as_deref(), Some("Cortex-A76"));
+        // RK3588: four little cores listed first, then four big ones.
+        let rk3588 = [core(0x41, 0xd05), core(0x41, 0xd05), core(0x41, 0xd0b), core(0x41, 0xd0b)].concat();
+        assert_eq!(arm_cpu_name(&rk3588).as_deref(), Some("Cortex-A55 + Cortex-A76"));
+        // A core newer than the table still names its maker.
+        assert_eq!(arm_cpu_name(&core(0xc0, 0xac5)).as_deref(), Some("Ampere"));
+        assert_eq!(arm_cpu_name(&core(0x99, 0xd0c)), None, "an unknown implementer names nothing");
+        assert_eq!(arm_cpu_name("processor\t: 0\nmodel name\t: AMD EPYC 7763 64-Core Processor\n"), None);
     }
 
     /// Totals over constructed /proc/net/dev text, with no sysfs to consult.
