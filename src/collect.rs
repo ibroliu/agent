@@ -772,8 +772,8 @@ fn cpuinfo() -> (String, u32) {
 }
 
 /// AArch64 cores by MIDR implementer and part, under the names util-linux's
-/// `lscpu-arm.c` gives them. Cores that cannot run an aarch64 kernel -- 32-bit
-/// Arm, Cortex-M and Cortex-R -- are left out, as this binary never sees them.
+/// `lscpu-arm.c` gives them. 32-bit Arm cores and the Cortex-M and Cortex-R
+/// microcontroller cores are left out.
 const ARM_CPUS: &[(u32, &str, Parts)] = &[
     (
         0x41,
@@ -922,10 +922,12 @@ const ARM_CPUS: &[(u32, &str, Parts)] = &[
 /// One implementer's parts, by MIDR part number.
 type Parts = &'static [(u32, &'static str)];
 
-/// What lscpu prints as the model name of an AArch64 CPU, whose /proc/cpuinfo
+/// The name of an AArch64 CPU, decoded as lscpu does it, since its /proc/cpuinfo
 /// carries no name, only each core's `CPU implementer` and `CPU part`. Every
 /// distinct core type is named once, in order, so a big.LITTLE chip reads as
-/// `Cortex-A55 + Cortex-A76` rather than as its first cluster. A part missing
+/// `Cortex-A55/Cortex-A76` rather than as its first cluster. The types are
+/// joined by `/`, not `+`: displays append ` × <cores>`, and
+/// `Cortex-A55 + Cortex-A76 × 8` reads as eight A76 cores. A part missing
 /// from [`ARM_CPUS`] takes its implementer's name; an unlisted implementer
 /// yields `None`.
 fn arm_cpu_name(text: &str) -> Option<String> {
@@ -946,7 +948,7 @@ fn arm_cpu_name(text: &str) -> Option<String> {
             _ => {}
         }
     }
-    (!names.is_empty()).then(|| names.join(" + "))
+    (!names.is_empty()).then(|| names.join("/"))
 }
 
 fn os_pretty_name() -> String {
@@ -1069,7 +1071,7 @@ mod tests {
         assert_eq!(arm_cpu_name(&core(0x48, 0xd40)).as_deref(), Some("Cortex-A76"));
         // RK3588: four little cores listed first, then four big ones.
         let rk3588 = [core(0x41, 0xd05), core(0x41, 0xd05), core(0x41, 0xd0b), core(0x41, 0xd0b)].concat();
-        assert_eq!(arm_cpu_name(&rk3588).as_deref(), Some("Cortex-A55 + Cortex-A76"));
+        assert_eq!(arm_cpu_name(&rk3588).as_deref(), Some("Cortex-A55/Cortex-A76"));
         // A core newer than the table still names its maker.
         assert_eq!(arm_cpu_name(&core(0xc0, 0xac5)).as_deref(), Some("Ampere"));
         assert_eq!(arm_cpu_name(&core(0x99, 0xd0c)), None, "an unknown implementer names nothing");
